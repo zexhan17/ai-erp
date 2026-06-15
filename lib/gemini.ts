@@ -328,7 +328,8 @@ export async function interpretIntent(
         const toolCall = msg.tool_calls[0];
         let args: Record<string, unknown> = {};
         try {
-            args = JSON.parse(toolCall.function.arguments);
+            const parsed = JSON.parse(toolCall.function.arguments);
+            args = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
         } catch {
             args = {};
         }
