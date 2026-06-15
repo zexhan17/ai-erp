@@ -17,7 +17,8 @@ export type ToolName =
     | "get_user_permissions"
     | "get_role_permissions"
     | "assign_permission_to_role"
-    | "remove_permission_from_role";
+    | "remove_permission_from_role"
+    | "unknown_intent";
 
 export interface ChatMessage {
     role: "user" | "assistant";
@@ -196,28 +197,67 @@ const toolDefinitions: FunctionDeclaration[] = [
             required: ["roleId", "permissionId"],
         },
     },
+    {
+        name: "unknown_intent",
+        description: "Use this for greetings, out-of-scope requests, ambiguous input, or anything that does not map to a specific ERP action",
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                message: {
+                    type: SchemaType.STRING,
+                    description: "A friendly, helpful reply to send directly to the user. For greetings, welcome them and explain what you can help with. For ambiguous requests, ask a clarifying question. For out-of-scope requests, politely explain what you cannot do and suggest what you can do instead.",
+                },
+            },
+            required: ["message"],
+        },
+    },
 ];
 
 const tools: Tool[] = [{ functionDeclarations: toolDefinitions }];
 
+const MAX_HISTORY_MESSAGES = 10;
+
+function trimHistory(history: ChatMessage[]): ChatMessage[] {
+    if (history.length <= MAX_HISTORY_MESSAGES) return history;
+    const trimmed = history.slice(-MAX_HISTORY_MESSAGES);
+    // Gemini requires strict user/model alternation — never start on a model turn
+    if (trimmed[0]?.role === "assistant") return trimmed.slice(1);
+    return trimmed;
+}
+
+export interface QuotedMessage {
+    role: "user" | "assistant";
+    content: string;
+}
+
 export async function interpretIntent(
     message: string,
-    history: ChatMessage[] = []
+    history: ChatMessage[] = [],
+    quotedMessage?: QuotedMessage
 ): Promise<ToolCall | string | null> {
+    const trimmedHistory = trimHistory(history);
+
+    // Inject quoted context directly into the message so the AI knows exactly what the user is referencing
+    const contextualMessage = quotedMessage
+        ? `[Replying to ${quotedMessage.role === "assistant" ? "assistant" : "user"} message: "${quotedMessage.content.slice(0, 200)}"]\n\n${message}`
+        : message;
+
     const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash-lite",
         tools,
         systemInstruction:
-            "You are an ERP assistant. ALWAYS respond by calling a tool — never reply with plain text. " +
-            "Available capabilities: manage products (create/list/update/delete), manage users (create/list), " +
-            "manage roles (list/assign/remove), manage permissions (list all, get by user, get by role, assign/remove from role). " +
+            "You are a friendly and helpful ERP assistant. ALWAYS respond by calling a tool — never reply with plain text. " +
+            "You can help with: managing products (create, list, update, delete), managing users (create, list), " +
+            "managing roles (list, assign to users, remove from users), and managing permissions (list all, view by user or role, assign/remove from roles). " +
             "Use context from the conversation history to resolve references like 'that user', 'his ID', 'the role above', 'their permissions', etc. " +
             "When the user asks about permissions of a role, use get_role_permissions. " +
-            "When the user asks about permissions of a user, use get_user_permissions.",
+            "When the user asks about permissions of a user, use get_user_permissions. " +
+            "For greetings or small talk, call unknown_intent and write a warm, helpful welcome message explaining what you can do. " +
+            "For ambiguous requests (e.g. 'delete it' with no prior context), call unknown_intent and ask a specific clarifying question. " +
+            "For requests outside your capabilities (e.g. weather, emails, writing code), call unknown_intent, politely say you can't help with that, and remind the user what you can do.",
     });
 
-    // Build multi-turn conversation contents from history
-    const historyContents = history.map((m) => ({
+    const historyContents = trimmedHistory.map((m) => ({
         role: m.role === "assistant" ? ("model" as const) : ("user" as const),
         parts: [{ text: m.content }],
     }));
@@ -227,7 +267,7 @@ export async function interpretIntent(
             ...historyContents,
             {
                 role: "user" as const,
-                parts: [{ text: message }],
+                parts: [{ text: contextualMessage }],
             },
         ],
     });

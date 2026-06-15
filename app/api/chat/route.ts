@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getUserPermissions, checkPermission } from "@/lib/permissions";
-import { interpretIntent, ToolCall, ChatMessage } from "@/lib/gemini";
+import { interpretIntent, ToolCall, ChatMessage, QuotedMessage } from "@/lib/gemini";
 import { validateToolCall } from "@/lib/validator";
 import { ProductService } from "@/services/productService";
 import { UserService } from "@/services/userService";
@@ -180,6 +180,9 @@ async function executeToolCall(
             }
         }
 
+        case "unknown_intent":
+            return (args.message as string) || "I can only help with products, users, roles, and permissions.";
+
         default:
             return "Unknown command.";
     }
@@ -193,6 +196,12 @@ const chatSchema = z.object({
             content: z.string(),
         })
     ).optional().default([]),
+    chatId: z.string().uuid().optional(),
+    replyTo: z.object({
+        id: z.string().uuid(),
+        role: z.enum(["user", "assistant"]),
+        content: z.string(),
+    }).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -216,62 +225,86 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    const { message, history } = parsed.data;
+    const { message, history, chatId, replyTo } = parsed.data;
 
-    console.log(`[chat] user=${session.sub} message="${message}"`);
+    // Resolve or create the chat session
+    let activeChatId: string;
+    if (chatId) {
+        const existing = await prisma.chat.findFirst({ where: { id: chatId, userId: session.sub } });
+        if (!existing) {
+            return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+        }
+        activeChatId = chatId;
+    } else {
+        const newChat = await prisma.chat.create({
+            data: {
+                userId: session.sub,
+                title: message.slice(0, 60),
+            },
+        });
+        activeChatId = newChat.id;
+    }
 
-    // Step 1: AI interprets intent
-    let toolCall: ToolCall | string | null;
+    await prisma.message.create({
+        data: {
+            chatId: activeChatId,
+            role: "user",
+            content: message,
+            ...(replyTo ? { replyToId: replyTo.id } : {}),
+        },
+    });
+
+    console.log(`[chat] user=${session.sub} chat=${activeChatId} message="${message}"`);
+
+    // Determine reply
+    let reply: string;
+
     try {
-        toolCall = await interpretIntent(message, history as ChatMessage[]);
+        const toolCall = await interpretIntent(message, history as ChatMessage[], replyTo as QuotedMessage | undefined);
+
+        if (!toolCall) {
+            reply = "I couldn't understand your request. Try asking me to list products, show users, show roles, check permissions, or create/update/delete a product.";
+        } else if (typeof toolCall === "string") {
+            reply = toolCall;
+        } else {
+            const validation = validateToolCall(toolCall);
+            if (!validation.success) {
+                reply = validation.error;
+            } else {
+                const requiredPermission = TOOL_PERMISSION_MAP[toolCall.tool];
+                if (requiredPermission) {
+                    const permissions = await getUserPermissions(session.sub);
+                    if (!checkPermission(permissions, requiredPermission)) {
+                        reply = "You do not have permission to perform this action.";
+                    } else {
+                        reply = await executeToolCall(toolCall, validation.data, session.sub);
+                    }
+                } else {
+                    reply = await executeToolCall(toolCall, validation.data, session.sub);
+                }
+            }
+        }
     } catch (err: unknown) {
         console.error("Gemini error:", err);
-        // Surface rate-limit retry info to the user
         const msg = err instanceof Error ? err.message : "";
         const retryMatch = msg.match(/Please retry in (\d+)/);
         if (retryMatch || msg.includes("429") || msg.includes("Too Many Requests") || msg.includes("quota")) {
             const seconds = retryMatch ? retryMatch[1] : "60";
-            return NextResponse.json(
-                { reply: `AI rate limit reached. Please retry in ${seconds} seconds.` }
-            );
-        }
-        return NextResponse.json(
-            { reply: "AI service unavailable. Please try again." }
-        );
-    }
-
-    if (!toolCall) {
-        return NextResponse.json({
-            reply: "I couldn't understand your request. Try asking me to list products, show users, show roles, check permissions, or create/update/delete a product.",
-        });
-    }
-
-    // Gemini responded with plain text (no tool call)
-    if (typeof toolCall === "string") {
-        console.log(`[chat] user=${session.sub} gemini_text reply="${toolCall.slice(0, 120)}"`);
-        return NextResponse.json({ reply: toolCall });
-    }
-
-    // Step 2: Validate tool call arguments
-    const validation = validateToolCall(toolCall);
-    if (!validation.success) {
-        return NextResponse.json({ reply: validation.error });
-    }
-
-    // Step 3: Check permissions
-    const requiredPermission = TOOL_PERMISSION_MAP[toolCall.tool];
-    if (requiredPermission) {
-        const permissions = await getUserPermissions(session.sub);
-        if (!checkPermission(permissions, requiredPermission)) {
-            return NextResponse.json({
-                reply: "You do not have permission to perform this action.",
-            });
+            reply = `AI rate limit reached. Please retry in ${seconds} seconds.`;
+        } else {
+            reply = "AI service unavailable. Please try again.";
         }
     }
 
-    // Step 4: Execute action via domain service
-    const reply = await executeToolCall(toolCall, validation.data, session.sub);
+    // Save the assistant reply and bump chat's updatedAt
+    await prisma.message.create({
+        data: { chatId: activeChatId, role: "assistant", content: reply },
+    });
+    await prisma.chat.update({
+        where: { id: activeChatId },
+        data: { updatedAt: new Date() },
+    });
 
-    console.log(`[chat] user=${session.sub} tool=${toolCall.tool} reply="${reply.slice(0, 120)}"`);
-    return NextResponse.json({ reply });
+    console.log(`[chat] user=${session.sub} chat=${activeChatId} reply="${reply.slice(0, 120)}"`);
+    return NextResponse.json({ reply, chatId: activeChatId });
 }

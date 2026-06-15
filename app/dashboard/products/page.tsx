@@ -28,7 +28,7 @@ export default function ProductsPage() {
     }, []);
 
     return (
-        <div className="max-w-6xl mx-auto px-4 py-8 w-full">
+        <div className="max-w-6xl mx-auto px-4 py-8 w-full overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-2xl font-bold text-gray-900">Products</h1>
                 <Link

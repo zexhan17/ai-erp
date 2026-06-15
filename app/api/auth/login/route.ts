@@ -4,7 +4,7 @@ import { comparePassword, signToken, COOKIE_OPTIONS } from "@/lib/auth";
 import { z } from "zod";
 
 const loginSchema = z.object({
-    email: z.string().email(),
+    email: z.email(),
     password: z.string().min(1),
 });
 

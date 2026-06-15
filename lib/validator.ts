@@ -79,6 +79,7 @@ const schemas: Record<ToolName, z.ZodTypeAny> = {
     get_role_permissions: getRolePermissionsSchema,
     assign_permission_to_role: assignPermissionToRoleSchema,
     remove_permission_from_role: removePermissionFromRoleSchema,
+    unknown_intent: z.object({ message: z.string().optional() }),
 };
 
 export interface ValidationResult {
