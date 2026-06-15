@@ -31,6 +31,11 @@ const createUserSchema = z.object({
 
 const getUsersSchema = z.object({});
 
+const deleteUserSchema = z.object({
+    id: z.string().uuid("Invalid user ID").optional(),
+    email: z.string().email("Invalid email address").optional(),
+});
+
 const getRolesSchema = z.object({});
 
 const assignRoleSchema = z.object({
@@ -71,6 +76,7 @@ const schemas: Record<ToolName, z.ZodTypeAny> = {
     delete_product: deleteProductSchema,
     create_user: createUserSchema,
     get_users: getUsersSchema,
+    delete_user: deleteUserSchema,
     get_roles: getRolesSchema,
     assign_role: assignRoleSchema,
     remove_role: removeRoleSchema,

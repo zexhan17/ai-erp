@@ -156,12 +156,14 @@ export default function ChatWindow({ chatId, onChatCreated }: ChatWindowProps) {
             <div className="border-t border-gray-200 bg-white px-4 py-4 shrink-0">
                 <div className="max-w-3xl mx-auto">
                     <MessageInput
+                        key={chatId ?? "new"}
                         value={input}
                         onChange={setInput}
                         onSubmit={handleSend}
                         disabled={loading}
                         replyTo={replyTo}
                         onCancelReply={() => setReplyTo(null)}
+                        userMessages={messages.filter((m) => m.role === "user").map((m) => m.content)}
                         extraAction={messages.length > 0 ? (
                             <button
                                 type="button"

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getUserPermissions, checkPermission } from "@/lib/permissions";
-import { interpretIntent, ToolCall, ChatMessage, QuotedMessage } from "@/lib/gemini";
+import { runAgentLoop, ToolCall, ToolName, ChatMessage, QuotedMessage } from "@/lib/gemini";
 import { validateToolCall } from "@/lib/validator";
 import { ProductService } from "@/services/productService";
 import { UserService } from "@/services/userService";
@@ -16,6 +16,7 @@ const TOOL_PERMISSION_MAP: Record<string, string> = {
     delete_product: "product:delete",
     create_user: "user:create",
     get_users: "user:create",
+    delete_user: "user:create",
     get_roles: "user:assign-role",
     assign_role: "user:assign-role",
     remove_role: "user:assign-role",
@@ -100,6 +101,18 @@ async function executeToolCall(
                 return `| ${u.email} | ${roles} | \`${u.id}\` |`;
             }).join("\n");
             return `| Email | Roles | ID |\n|-------|-------|----|\n${rows}`;
+        }
+
+        case "delete_user": {
+            let user = null;
+            if (args.id) {
+                user = await prisma.user.findUnique({ where: { id: args.id as string } });
+            } else if (args.email) {
+                user = await prisma.user.findUnique({ where: { email: args.email as string } });
+            }
+            if (!user) return args.email ? `No user found with email "${args.email}".` : `User not found.`;
+            await UserService.deleteUser(user.id);
+            return `User "${user.email}" deleted successfully.`;
         }
 
         case "get_roles": {
@@ -256,36 +269,35 @@ export async function POST(req: NextRequest) {
 
     console.log(`[chat] user=${session.sub} chat=${activeChatId} message="${message}"`);
 
-    // Determine reply
+    // Determine reply via agentic loop
     let reply: string;
 
     try {
-        const toolCall = await interpretIntent(message, history as ChatMessage[], replyTo as QuotedMessage | undefined);
-
-        if (!toolCall) {
-            reply = "I couldn't understand your request. Try asking me to list products, show users, show roles, check permissions, or create/update/delete a product.";
-        } else if (typeof toolCall === "string") {
-            reply = toolCall;
-        } else {
-            const validation = validateToolCall(toolCall);
+        const executor = async (tool: ToolName, args: Record<string, unknown>): Promise<string> => {
+            const toolCallObj: ToolCall = { tool, arguments: args };
+            const validation = validateToolCall(toolCallObj);
             if (!validation.success) {
-                reply = validation.error;
-            } else {
-                const requiredPermission = TOOL_PERMISSION_MAP[toolCall.tool];
-                if (requiredPermission) {
-                    const permissions = await getUserPermissions(session.sub);
-                    if (!checkPermission(permissions, requiredPermission)) {
-                        reply = "You do not have permission to perform this action.";
-                    } else {
-                        reply = await executeToolCall(toolCall, validation.data, session.sub);
-                    }
-                } else {
-                    reply = await executeToolCall(toolCall, validation.data, session.sub);
+                console.warn(`[chat] validation_failed tool=${tool} error="${validation.error}" args=${JSON.stringify(args)}`);
+                return validation.error;
+            }
+            const requiredPermission = TOOL_PERMISSION_MAP[tool];
+            if (requiredPermission) {
+                const permissions = await getUserPermissions(session.sub);
+                if (!checkPermission(permissions, requiredPermission)) {
+                    return "You do not have permission to perform this action.";
                 }
             }
-        }
+            return executeToolCall(toolCallObj, validation.data, session.sub);
+        };
+
+        reply = await runAgentLoop(
+            message,
+            history as ChatMessage[],
+            executor,
+            replyTo as QuotedMessage | undefined
+        );
     } catch (err: unknown) {
-        console.error("Gemini error:", err);
+        console.error("AI error:", err);
         const msg = err instanceof Error ? err.message : "";
         const retryMatch = msg.match(/Please retry in (\d+)/);
         if (retryMatch || msg.includes("429") || msg.includes("Too Many Requests") || msg.includes("quota")) {

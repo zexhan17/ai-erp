@@ -21,6 +21,8 @@ export default function DashboardLayout({
         { href: "/dashboard/chat", label: "Chat" },
         { href: "/dashboard/products", label: "Products" },
         { href: "/dashboard/users", label: "Users" },
+        { href: "/dashboard/roles", label: "Roles" },
+        { href: "/dashboard/permissions", label: "Permissions" },
     ];
 
     return (

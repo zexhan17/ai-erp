@@ -57,4 +57,8 @@ export const UserService = {
             where: { roleId_permissionId: { roleId, permissionId } },
         });
     },
+
+    async deleteUser(userId: string) {
+        return prisma.user.delete({ where: { id: userId } });
+    },
 };

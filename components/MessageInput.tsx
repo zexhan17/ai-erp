@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, KeyboardEvent } from "react";
+import { FormEvent, KeyboardEvent, useRef, ChangeEvent } from "react";
 import React from "react";
 import type { ReplyTo } from "@/components/MessageList";
 
@@ -12,6 +12,7 @@ interface MessageInputProps {
     replyTo?: ReplyTo | null;
     onCancelReply?: () => void;
     extraAction?: React.ReactNode;
+    userMessages?: string[];
 }
 
 export default function MessageInput({
@@ -22,16 +23,50 @@ export default function MessageInput({
     replyTo,
     onCancelReply,
     extraAction,
+    userMessages = [],
 }: MessageInputProps) {
+    const historyIndex = useRef(-1);
+    const navigating = useRef(false);
+
     function handleSubmit(e: FormEvent) {
         e.preventDefault();
         if (value.trim() && !disabled) onSubmit();
+    }
+
+    function handleChange(e: ChangeEvent<HTMLTextAreaElement>) {
+        if (navigating.current) {
+            navigating.current = false;
+        } else {
+            historyIndex.current = -1;
+        }
+        onChange(e.target.value);
     }
 
     function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             if (value.trim() && !disabled) onSubmit();
+            return;
+        }
+
+        if (e.key === "ArrowUp" && (value === "" || historyIndex.current >= 0) && userMessages.length > 0) {
+            e.preventDefault();
+            const next = historyIndex.current + 1;
+            if (next < userMessages.length) {
+                historyIndex.current = next;
+                navigating.current = true;
+                onChange(userMessages[userMessages.length - 1 - next]);
+            }
+            return;
+        }
+
+        if (e.key === "ArrowDown" && historyIndex.current >= 0) {
+            e.preventDefault();
+            const next = historyIndex.current - 1;
+            historyIndex.current = next;
+            navigating.current = true;
+            onChange(next < 0 ? "" : userMessages[userMessages.length - 1 - next]);
+            return;
         }
     }
 
@@ -59,7 +94,7 @@ export default function MessageInput({
                 {extraAction}
                 <textarea
                     value={value}
-                    onChange={(e) => onChange(e.target.value)}
+                    onChange={handleChange}
                     onKeyDown={handleKeyDown}
                     disabled={disabled}
                     rows={1}
