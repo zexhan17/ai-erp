@@ -15,7 +15,18 @@ export default function ChatWindow({ chatId, onChatCreated }: ChatWindowProps) {
     const [loading, setLoading] = useState(false);
     const [loadingHistory, setLoadingHistory] = useState(false);
     const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
+    const [copied, setCopied] = useState(false);
     const bottomRef = useRef<HTMLDivElement>(null);
+
+    async function handleCopyChat() {
+        if (messages.length === 0) return;
+        const text = messages
+            .map((m) => `${m.role === "user" ? "You" : "Assistant"}: ${m.content}`)
+            .join("\n\n");
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    }
 
     useEffect(() => {
         if (!chatId) {
@@ -151,6 +162,15 @@ export default function ChatWindow({ chatId, onChatCreated }: ChatWindowProps) {
                         disabled={loading}
                         replyTo={replyTo}
                         onCancelReply={() => setReplyTo(null)}
+                        extraAction={messages.length > 0 ? (
+                            <button
+                                type="button"
+                                onClick={handleCopyChat}
+                                className="text-xs text-gray-400 hover:text-gray-700 px-3 py-3 rounded-xl hover:bg-gray-100 transition-colors shrink-0 border border-gray-300"
+                            >
+                                {copied ? "✓" : "⎘"}
+                            </button>
+                        ) : undefined}
                     />
                 </div>
             </div>

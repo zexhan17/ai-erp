@@ -1,3 +1,6 @@
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
 export interface ReplyTo {
     id: string;
     role: "user" | "assistant";
@@ -67,13 +70,38 @@ export default function MessageList({ messages, onReply }: MessageListProps) {
 
                             {/* Message bubble */}
                             <div
-                                className={`rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap leading-relaxed ${
+                                className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                                     isUser
-                                        ? "bg-blue-600 text-white rounded-br-sm"
+                                        ? "bg-blue-600 text-white rounded-br-sm whitespace-pre-wrap"
                                         : "bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-sm"
                                 }`}
                             >
-                                {msg.content}
+                                {isUser ? msg.content : (
+                                    <ReactMarkdown
+                                        remarkPlugins={[remarkGfm]}
+                                        components={{
+                                            table: ({ children }) => (
+                                                <div className="overflow-x-auto my-1">
+                                                    <table className="border-collapse text-xs w-full">{children}</table>
+                                                </div>
+                                            ),
+                                            thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
+                                            th: ({ children }) => (
+                                                <th className="border border-gray-200 px-3 py-1.5 text-left font-medium text-gray-700">{children}</th>
+                                            ),
+                                            td: ({ children }) => (
+                                                <td className="border border-gray-200 px-3 py-1.5 text-gray-700">{children}</td>
+                                            ),
+                                            code: ({ children }) => (
+                                                <code className="bg-gray-100 rounded px-1 py-0.5 text-xs font-mono text-gray-700">{children}</code>
+                                            ),
+                                            p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                                            strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                                        }}
+                                    >
+                                        {msg.content}
+                                    </ReactMarkdown>
+                                )}
                             </div>
                         </div>
 

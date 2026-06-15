@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent } from "react";
+import React from "react";
 import type { ReplyTo } from "@/components/MessageList";
 
 interface MessageInputProps {
@@ -10,6 +11,7 @@ interface MessageInputProps {
     disabled?: boolean;
     replyTo?: ReplyTo | null;
     onCancelReply?: () => void;
+    extraAction?: React.ReactNode;
 }
 
 export default function MessageInput({
@@ -19,6 +21,7 @@ export default function MessageInput({
     disabled,
     replyTo,
     onCancelReply,
+    extraAction,
 }: MessageInputProps) {
     function handleSubmit(e: FormEvent) {
         e.preventDefault();
@@ -53,6 +56,7 @@ export default function MessageInput({
                 </div>
             )}
             <form onSubmit={handleSubmit} className="flex gap-2 items-end">
+                {extraAction}
                 <textarea
                     value={value}
                     onChange={(e) => onChange(e.target.value)}

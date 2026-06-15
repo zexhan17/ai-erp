@@ -43,13 +43,13 @@ async function executeToolCall(
 
         case "get_products": {
             const products = await ProductService.getProducts();
-            if (products.length === 0) {
-                return "No products found.";
-            }
-            const list = products
-                .map((p: { name: string; price: number }, i: number) => `${i + 1}. ${p.name} — $${p.price}`)
+            if (products.length === 0) return "No products found.";
+            const rows = products
+                .map((p: { id: string; name: string; description?: string | null; price: number }) =>
+                    `| ${p.name} | ${p.description ?? "—"} | $${p.price.toFixed(2)} | \`${p.id}\` |`
+                )
                 .join("\n");
-            return `Here are all products:\n${list}`;
+            return `| Name | Description | Price | ID |\n|------|-------------|-------|----|\n${rows}`;
         }
 
         case "get_product": {
@@ -95,18 +95,18 @@ async function executeToolCall(
         case "get_users": {
             const users = await UserService.getUsers();
             if (users.length === 0) return "No users found.";
-            const list = users.map((u, i) => {
-                const roles = u.userRoles.map((ur: { role: { name: string } }) => ur.role.name).join(", ") || "no roles";
-                return `${i + 1}. ${u.email} (${roles}) — ID: ${u.id}`;
+            const rows = users.map((u) => {
+                const roles = u.userRoles.map((ur: { role: { name: string } }) => ur.role.name).join(", ") || "—";
+                return `| ${u.email} | ${roles} | \`${u.id}\` |`;
             }).join("\n");
-            return `Here are all users:\n${list}`;
+            return `| Email | Roles | ID |\n|-------|-------|----|\n${rows}`;
         }
 
         case "get_roles": {
             const roles = await UserService.getRoles();
             if (roles.length === 0) return "No roles found.";
-            const list = roles.map((r, i) => `${i + 1}. ${r.name} — ID: ${r.id}`).join("\n");
-            return `Available roles:\n${list}`;
+            const rows = roles.map((r) => `| ${r.name} | \`${r.id}\` |`).join("\n");
+            return `| Role | ID |\n|------|----|\n${rows}`;
         }
 
         case "assign_role": {
@@ -134,8 +134,8 @@ async function executeToolCall(
         case "get_permissions": {
             const permissions = await UserService.getPermissions();
             if (permissions.length === 0) return "No permissions found.";
-            const list = permissions.map((p, i) => `${i + 1}. ${p.name} — ID: ${p.id}`).join("\n");
-            return `Available permissions:\n${list}`;
+            const rows = permissions.map((p) => `| ${p.name} | \`${p.id}\` |`).join("\n");
+            return `| Permission | ID |\n|------------|----|\n${rows}`;
         }
 
         case "get_user_permissions": {
@@ -143,8 +143,8 @@ async function executeToolCall(
             if (!user) return `User with ID "${args.userId}" not found.`;
             const perms = await getUserPermissions(args.userId as string);
             if (perms.length === 0) return `User "${user.email}" has no permissions.`;
-            const list = perms.map((p, i) => `${i + 1}. ${p}`).join("\n");
-            return `Permissions for "${user.email}":\n${list}`;
+            const rows = perms.map((p) => `| ${p} |`).join("\n");
+            return `**Permissions for ${user.email}:**\n\n| Permission |\n|------------|\n${rows}`;
         }
 
         case "get_role_permissions": {
@@ -154,8 +154,8 @@ async function executeToolCall(
             });
             if (!role) return `Role with ID "${args.roleId}" not found.`;
             if (role.rolePermissions.length === 0) return `Role "${role.name}" has no permissions.`;
-            const list = role.rolePermissions.map((rp: { permission: { name: string } }, i: number) => `${i + 1}. ${rp.permission.name}`).join("\n");
-            return `Permissions for role "${role.name}":\n${list}`;
+            const rows = role.rolePermissions.map((rp: { permission: { name: string } }) => `| ${rp.permission.name} |`).join("\n");
+            return `**Permissions for role "${role.name}":**\n\n| Permission |\n|------------|\n${rows}`;
         }
 
         case "assign_permission_to_role": {
