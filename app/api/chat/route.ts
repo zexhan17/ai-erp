@@ -299,10 +299,10 @@ export async function POST(req: NextRequest) {
     } catch (err: unknown) {
         console.error("AI error:", err);
         const msg = err instanceof Error ? err.message : "";
-        const retryMatch = msg.match(/Please retry in (\d+)/);
+        const retryMatch = msg.match(/Please try again in ([^."]+)/i) ?? msg.match(/Please retry in (\d+)/i);
         if (retryMatch || msg.includes("429") || msg.includes("Too Many Requests") || msg.includes("quota")) {
-            const seconds = retryMatch ? retryMatch[1] : "60";
-            reply = `AI rate limit reached. Please retry in ${seconds} seconds.`;
+            const retryIn = retryMatch ? retryMatch[1].trim() : "a few minutes";
+            reply = `AI rate limit reached. Please retry in ${retryIn}.`;
         } else {
             reply = "AI service unavailable. Please try again.";
         }
