@@ -38,16 +38,6 @@ export interface QuotedMessage {
     content: string;
 }
 
-// Lookup tools: return data, continue the loop so AI can act on results
-const LOOKUP_TOOLS = new Set<ToolName>([
-    "get_users",
-    "get_products",
-    "get_roles",
-    "get_permissions",
-    "get_product",
-    "get_user_permissions",
-    "get_role_permissions",
-]);
 
 const tools: Groq.Chat.Completions.ChatCompletionTool[] = [
     {
@@ -264,13 +254,13 @@ const tools: Groq.Chat.Completions.ChatCompletionTool[] = [
         type: "function",
         function: {
             name: "unknown_intent",
-            description: "Use this for greetings, out-of-scope requests, ambiguous input, or anything that does not map to a specific ERP action",
+            description: "Call this ONLY when: (1) all requested tasks are fully complete — provide a brief confirmation summary, OR (2) the request is a greeting/small-talk, OR (3) the request is genuinely out-of-scope or ambiguous. NEVER call between steps.",
             parameters: {
                 type: "object",
                 properties: {
                     message: {
                         type: "string",
-                        description: "A friendly, helpful reply to send directly to the user. For greetings, welcome them and explain what you can help with. For ambiguous requests, ask a clarifying question. For out-of-scope requests, politely explain what you cannot do and suggest what you can do instead.",
+                        description: "Confirmation of completed tasks (e.g. 'Created user X and assigned them the Employee role.'), a greeting, or a clarifying question.",
                     },
                 },
                 required: ["message"],
@@ -281,34 +271,39 @@ const tools: Groq.Chat.Completions.ChatCompletionTool[] = [
 
 const SYSTEM_PROMPT =
     "You are a friendly and helpful ERP assistant. ALWAYS respond by calling a tool — never reply with plain text. " +
-    "You can help with: managing products (create, list, update, delete), managing users (create, list), " +
+    "You can help with: managing products (create, list, update, delete), managing users (create, list, delete), " +
     "managing roles (list, assign to users, remove from users), and managing permissions (list all, view by user or role, assign/remove from roles). " +
 
-    "CRITICAL — multi-step execution: " +
-    "You operate in an agentic loop. When you call a lookup tool (get_users, get_products, get_roles, get_permissions, get_product, get_user_permissions, get_role_permissions), " +
-    "the result is automatically fed back to you in the next turn. " +
-    "You must then immediately call the action tool using the real IDs from those results — do NOT call unknown_intent between steps. " +
-    "Example: user says 'delete test user' → call get_users → receive list → call delete_user with the real UUID from the list. " +
-    "Example: user says 'assign Admin role to test@test.com' → call get_users AND get_roles (sequentially) → then call assign_role with real IDs. " +
+    "CRITICAL — agentic loop: " +
+    "Every tool result is automatically fed back to you. You must keep calling tools until ALL requested tasks are done. " +
+    "Only call unknown_intent when every task in the user's message is complete — use it to send a brief confirmation. " +
+    "Example flow for 'create user X and give employee role': " +
+    "  Step 1 → create_user(email, password) — returns new user ID " +
+    "  Step 2 → get_roles() — returns role list with real UUIDs " +
+    "  Step 3 → assign_role(userId from step 1, roleId from step 2) " +
+    "  Step 4 → unknown_intent('Created user X and assigned them the Employee role.') " +
+    "Example flow for 'delete test user': " +
+    "  Step 1 → get_users() — returns user list " +
+    "  Step 2 → delete_user(id from step 1) " +
+    "  Step 3 → unknown_intent('Deleted user test@test.com.') " +
+    "Example flow for 'list all users': " +
+    "  Step 1 → get_users() — returns formatted table " +
+    "  Step 2 → unknown_intent(paste the full table exactly as returned) " +
 
-    "CRITICAL — act immediately, never announce: " +
-    "Never use unknown_intent to say what you are about to do. Call the tool directly. " +
-    "NEVER say 'let me list...', 'I will fetch...', 'please wait' — just call the tool. " +
-    "If you want to say 'I will look up users first' — DO NOT. Instead: call get_users immediately. " +
-    "unknown_intent is ONLY for greetings, out-of-scope requests, or genuine ambiguity — NOT for announcements or intermediate steps. " +
+    "CRITICAL — never announce, always act: " +
+    "NEVER call unknown_intent to say what you are about to do ('Let me look up...', 'I will fetch...'). " +
+    "Call the actual tool directly. unknown_intent is ONLY for: final confirmation, greetings, or genuine ambiguity. " +
 
-    "CRITICAL — data integrity rules: " +
-    "NEVER invent, guess, or fabricate any IDs, emails, names, or other data values. " +
-    "Only use IDs that appear in the tool results you have received in this conversation. " +
-    "If the user refers to an item by name or alias (e.g. 'delete test user', 'remove sabzi'), call the list tool first to find the real UUID. " +
-    "If the user provides an email address directly (e.g. 'delete test@test.com'), pass it as the email parameter — do NOT call get_users first. " +
-    "Use context from conversation history to resolve references like 'that user', 'the role above', 'their permissions'. " +
+    "CRITICAL — data integrity: " +
+    "NEVER fabricate IDs. Only use IDs that appear in tool results from this conversation. " +
+    "If user refers to something by name (e.g. 'test user'), call the list tool first to find the real UUID. " +
+    "If user provides an email directly, pass it as the email parameter to delete_user — no lookup needed. " +
 
-    "When the user asks about permissions of a role, use get_role_permissions. " +
-    "When the user asks about permissions of a user, use get_user_permissions. " +
-    "For greetings or small talk, call unknown_intent with a warm welcome message explaining what you can do. " +
-    "For ambiguous requests with no prior context, call unknown_intent and ask a specific clarifying question. " +
-    "For requests outside your capabilities, call unknown_intent and politely redirect to what you can do.";
+    "When asked about role permissions, use get_role_permissions. " +
+    "When asked about user permissions, use get_user_permissions. " +
+    "For greetings or small talk, call unknown_intent with a warm welcome message. " +
+    "For ambiguous requests, call unknown_intent and ask a clarifying question. " +
+    "For out-of-scope requests, call unknown_intent and redirect to what you can do.";
 
 const MAX_HISTORY_MESSAGES = 10;
 
@@ -328,6 +323,10 @@ function parseArgs(raw: string): Record<string, unknown> {
     }
 }
 
+class ToolUseFailed extends Error {
+    constructor() { super("tool_use_failed"); }
+}
+
 async function callGroq(messages: Groq.Chat.Completions.ChatCompletionMessageParam[]): Promise<Groq.Chat.Completions.ChatCompletion> {
     let response: Groq.Chat.Completions.ChatCompletion | undefined;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -341,6 +340,8 @@ async function callGroq(messages: Groq.Chat.Completions.ChatCompletionMessagePar
             break;
         } catch (err: unknown) {
             const status = (err as { status?: number })?.status;
+            const isToolUseFailed = status === 400 && (err as Error)?.message?.includes("tool_use_failed");
+            if (isToolUseFailed) throw new ToolUseFailed();
             const isTransient = status === 503 || status === 502 || status === 500;
             if (isTransient && attempt < 2) {
                 await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
@@ -353,12 +354,14 @@ async function callGroq(messages: Groq.Chat.Completions.ChatCompletionMessagePar
     return response;
 }
 
+const NARRATION = /\b(let me|i will|i'll|i need to|i'm going to|i am going to|looking up|going to|hang on|please wait|first[,\s]|finding|searching|checking|fetch)\b/i;
+
 export async function runAgentLoop(
     message: string,
     history: ChatMessage[],
     executor: (tool: ToolName, args: Record<string, unknown>) => Promise<string>,
     quotedMessage?: QuotedMessage,
-    maxSteps = 8
+    maxSteps = 12
 ): Promise<string> {
     const trimmedHistory = trimHistory(history);
 
@@ -375,12 +378,30 @@ export async function runAgentLoop(
         { role: "user", content: contextualMessage },
     ];
 
+    let lastResult = "";
+    let narrationCorrections = 0;
+    let toolUseFailures = 0;
+
     for (let step = 0; step < maxSteps; step++) {
-        const response = await callGroq(messages);
+        let response: Groq.Chat.Completions.ChatCompletion;
+        try {
+            response = await callGroq(messages);
+        } catch (err) {
+            if (err instanceof ToolUseFailed && toolUseFailures < 2) {
+                toolUseFailures++;
+                messages.push({
+                    role: "user",
+                    content: "Your previous tool call had invalid syntax and was rejected. Call the correct tool now with properly formatted arguments.",
+                } as Groq.Chat.Completions.ChatCompletionMessageParam);
+                console.log(`[agent] tool_use_failed recovery #${toolUseFailures}`);
+                continue;
+            }
+            throw err;
+        }
         const msg = response.choices[0].message;
 
         if (!msg.tool_calls || msg.tool_calls.length === 0) {
-            return msg.content?.trim() ?? "I couldn't process your request.";
+            return msg.content?.trim() ?? lastResult ?? "I couldn't process your request.";
         }
 
         const toolCall = msg.tool_calls[0];
@@ -390,10 +411,10 @@ export async function runAgentLoop(
         console.log(`[agent] step=${step + 1} tool=${toolName} args=${JSON.stringify(args)}`);
 
         if (toolName === "unknown_intent") {
-            const announcement = (args.message as string) ?? "";
-            const NARRATION = /\b(let me|i will|i'll|i need to|i'm going to|i am going to|looking up|going to|hang on|please wait|first[,\s]|finding|searching|checking|fetch)\b/i;
-            if (NARRATION.test(announcement)) {
-                // Model is narrating — inject a correction and retry
+            const text = (args.message as string) ?? "";
+            // Model is narrating instead of acting — correct it once or twice, then give up
+            if (NARRATION.test(text) && narrationCorrections < 2) {
+                narrationCorrections++;
                 messages.push({
                     role: "assistant",
                     content: msg.content ?? null,
@@ -402,34 +423,34 @@ export async function runAgentLoop(
                 messages.push({
                     role: "tool" as const,
                     tool_call_id: toolCall.id,
-                    content: "WRONG: Do not use unknown_intent to announce what you will do. Call the correct tool right now — get_users, get_products, delete_user, etc.",
+                    content: "WRONG: Do not announce. Call the correct tool right now.",
                 } as Groq.Chat.Completions.ChatCompletionMessageParam);
-                console.log(`[agent] step=${step + 1} narration_corrected message="${announcement.slice(0, 80)}"`);
+                console.log(`[agent] narration_corrected (${narrationCorrections}) message="${text.slice(0, 80)}"`);
                 continue;
             }
-            return announcement || "I can only help with products, users, roles, and permissions.";
+            // Narration corrections exhausted — don't return narration text as reply
+            if (NARRATION.test(text)) {
+                return lastResult || "I can only help with products, users, roles, and permissions.";
+            }
+            // Legitimate completion or out-of-scope
+            return text || lastResult || "I can only help with products, users, roles, and permissions.";
         }
 
+        // Execute tool — all results feed back so the model can chain actions
         const result = await executor(toolName, args);
+        lastResult = result;
 
-        // Lookup tool — feed result back so AI can continue to the action step
-        if (LOOKUP_TOOLS.has(toolName)) {
-            messages.push({
-                role: "assistant",
-                content: msg.content ?? null,
-                tool_calls: msg.tool_calls,
-            } as Groq.Chat.Completions.ChatCompletionMessageParam);
-            messages.push({
-                role: "tool" as const,
-                tool_call_id: toolCall.id,
-                content: result,
-            } as Groq.Chat.Completions.ChatCompletionMessageParam);
-            continue;
-        }
-
-        // Action tool — done, return result directly
-        return result;
+        messages.push({
+            role: "assistant",
+            content: msg.content ?? null,
+            tool_calls: msg.tool_calls,
+        } as Groq.Chat.Completions.ChatCompletionMessageParam);
+        messages.push({
+            role: "tool" as const,
+            tool_call_id: toolCall.id,
+            content: result,
+        } as Groq.Chat.Completions.ChatCompletionMessageParam);
     }
 
-    return "I wasn't able to complete the request in time. Please try a more specific request.";
+    return lastResult || "I wasn't able to complete the request in time. Please try a more specific request.";
 }

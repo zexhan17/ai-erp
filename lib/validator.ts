@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ToolName, ToolCall } from "./gemini";
+import type { ToolName, ToolCall } from "./agent";
 
 const createProductSchema = z.object({
     name: z.string().min(1, "Name is required"),

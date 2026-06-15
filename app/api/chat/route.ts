@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getUserPermissions, checkPermission } from "@/lib/permissions";
-import { runAgentLoop, ToolCall, ToolName, ChatMessage, QuotedMessage } from "@/lib/gemini";
+import { runAgentLoop, ToolCall, ToolName, ChatMessage, QuotedMessage } from "@/lib/agent";
 import { validateToolCall } from "@/lib/validator";
 import { ProductService } from "@/services/productService";
 import { UserService } from "@/services/userService";

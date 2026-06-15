@@ -18,6 +18,7 @@ export default function UsersPage() {
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [deleting, setDeleting] = useState<string | null>(null);
 
     useEffect(() => {
         fetch("/api/users")
@@ -29,6 +30,24 @@ export default function UsersPage() {
             .catch(() => setError("Network error"))
             .finally(() => setLoading(false));
     }, []);
+
+    async function handleDelete(user: User) {
+        if (!confirm(`Delete user "${user.email}"? This cannot be undone.`)) return;
+        setDeleting(user.id);
+        try {
+            const res = await fetch(`/api/users/${user.id}`, { method: "DELETE" });
+            if (res.ok) {
+                setUsers((prev) => prev.filter((u) => u.id !== user.id));
+            } else {
+                const data = await res.json();
+                alert(data.error ?? "Failed to delete user");
+            }
+        } catch {
+            alert("Network error");
+        } finally {
+            setDeleting(null);
+        }
+    }
 
     return (
         <div className="max-w-6xl mx-auto px-4 py-8 w-full overflow-y-auto">
@@ -71,6 +90,7 @@ export default function UsersPage() {
                                 <th className="text-left px-4 py-3 font-medium text-gray-600">Roles</th>
                                 <th className="text-left px-4 py-3 font-medium text-gray-600">Created</th>
                                 <th className="text-left px-4 py-3 font-medium text-gray-600">ID</th>
+                                <th className="px-4 py-3" />
                             </tr>
                         </thead>
                         <tbody>
@@ -101,6 +121,15 @@ export default function UsersPage() {
                                     </td>
                                     <td className="px-4 py-3 text-gray-400 font-mono text-xs">
                                         {user.id}
+                                    </td>
+                                    <td className="px-4 py-3 text-right">
+                                        <button
+                                            onClick={() => handleDelete(user)}
+                                            disabled={deleting === user.id}
+                                            className="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors disabled:opacity-40"
+                                        >
+                                            {deleting === user.id ? "Deleting…" : "Delete"}
+                                        </button>
                                     </td>
                                 </tr>
                             ))}
